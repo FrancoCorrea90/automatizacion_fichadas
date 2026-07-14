@@ -38,7 +38,7 @@ import pandas as pd
 
 @dataclass
 class ConfigFichadas:
-    # Carpeta donde quedan los reportes procesados
+    # Carpeta donde quedan los reportes procesados#
     carpeta_salida: Path = Path(
         r"data/carpeta_salida"
     )
