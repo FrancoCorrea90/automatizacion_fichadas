@@ -21,3 +21,8 @@ Archivos de origen/
 .idea/
 Thumbs.db
 .DS_Store
+# Documentación y scripts locales (no se versionan)
+*.pdf
+*.docx
+*.bat
+@echo off.txt
