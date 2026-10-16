@@ -1,0 +1,23 @@
+# Entornos y cachés
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+# Credenciales y configuración privada
+.env
+.env.*
+!.env.example
+# Entradas, reportes y copias con datos personales
+entrada/
+data/
+salidas_fichadas/
+Archivos de origen/
+*.xls
+*.xlsx
+*.csv
+# Archivos locales
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
