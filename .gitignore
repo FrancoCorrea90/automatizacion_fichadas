@@ -1,28 +1,34 @@
-# Entornos y cachés
+# Entorno virtual y archivos temporales de Python
 .venv/
 venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
-# Credenciales y configuración privada
-.env
-.env.*
-!.env.example
-# Entradas, reportes y copias con datos personales
-entrada/
-data/
-salidas_fichadas/
-Archivos de origen/
+
+# Archivos de datos laborales
+/Archivos de origen/
+/salidas_fichadas/
+/data/entrada/
+/data/salidas_fichadas/
+/data/historico_originales/
+
+# Archivos Excel y reportes con datos reales
 *.xls
 *.xlsx
 *.csv
-# Archivos locales
-.vscode/
-.idea/
-Thumbs.db
+
+# Archivos temporales de Excel
+~$*
+
+# Archivos locales de configuración
+.env
+.env.*
+config_local.py
+
+# Archivos del sistema operativo
 .DS_Store
-# Documentación y scripts locales (no se versionan)
-*.pdf
-*.docx
-*.bat
-@echo off.txt
+Thumbs.db
+
+# Paquetes y copias temporales
+/automatizacion_fichadas_profesional/
+/automatizar_fichadas_2_corregido.py

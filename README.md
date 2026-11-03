@@ -1,124 +1,130 @@
-# Automatización de fichadas por quincena
+# Automatización de fichadas laborales | Python
 
-Herramienta en Python para procesar las marcaciones de un reloj de asistencia, calcular horas por empleado y generar reportes de control por quincena. Desarrollada por Franco Correa.
+**Proyecto de automatización de procesos administrativos y control de asistencia.**  
+**Autor:** Franco Correa · **Estado:** versión funcional en validación operativa · **Plataforma:** Windows / Python 3.10+
 
-## Funcionalidades
+## Objetivo
 
-- Lectura de Excel `.xls`, `.xlsx` y tablas HTML exportadas con extensión `.xls`.
-- Detección del encabezado y normalización de entradas y salidas.
-- Exclusión de duplicados cercanos y detección de correcciones inmediatas de estado.
-- Armado de turnos, control de fichadas incompletas y cálculo de horas computables.
-- Corte de turnos al cierre de quincena y tratamiento de salidas iniciales de madrugada.
-- Alertas por jornadas cortas, largas y superiores al promedio del empleado.
-- Exportación a CSV y Excel; copia del archivo de origen para trazabilidad.
-- Procesamiento manual o monitoreo de una carpeta de entrada.
+Transformar exportaciones quincenales del reloj de asistencia (`.xls` / `.xlsx`) en reportes trazables por empleado. El proceso normaliza registros, identifica inconsistencias, calcula jornadas computables, aplica cortes quincenales y entrega un Excel con hojas de control para Recursos Humanos.
 
-## Requisitos e instalación
+> **Importante:** la herramienta **no liquida salarios** ni reemplaza el control de RRHH. Las horas calculadas son una propuesta de cómputo que debe validarse antes de usarse en una liquidación.
 
-Python 3.10 o superior. Desde PowerShell en Windows:
+## Flujo de trabajo
 
-```powershell
-git clone https://github.com/FrancoCorrea90/automatizacion_fichadas.git
-cd automatizacion_fichadas
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```text
+Reloj de asistencia → Exportación Excel → data/entrada/
+    → Lectura y normalización → Duplicados y correcciones
+    → Armado de turnos → Controles de duración y corte quincenal
+    → Reporte de RRHH (Excel + CSV) → Validación humana
 ```
 
-Los comandos usan el ejecutable del entorno virtual directamente; no requieren activarlo.
+## Reglas principales
+
+| Condición | Regla implementada | Tratamiento |
+|---|---|---|
+| Turno hasta 14 h | Duración admisible, sujeto a otros controles | Computa |
+| Más de 14 h y hasta 17 h | Jornada extensa | Computa y se marca **REVISAR** |
+| Más de 17 h | Turno crítico | **No computa** y se registra en Errores |
+| Entrada abierta > 17 h y aparece otra Entrada | Marca antigua inconsistente | Se excluye la antigua y se toma la nueva |
+| Duplicados del mismo tipo dentro de 2 min | Se conserva la primera marca | Segunda marca excluida |
+| Salida sin entrada y seguida de Entrada dentro de 5 min | Corrección inmediata candidata | Se excluye la Salida incorrecta |
+| Turno inferior a 10 min | Jornada extremadamente corta | Computa, pero se marca con alerta de error para revisión |
+| Turno > 30 % del promedio del empleado | Atípico respecto del archivo procesado | Computa y se marca **REVISAR** |
+| Salida inicial, día 1/16 hasta 08:00 | Inferencia desde las 00:00 del período | Computa con observación; validar |
+| Entrada sin salida en día de corte | Inferencia hasta 23:59:59, si no excede 17 h | Computa con observación; validar |
+
+**Orden de controles:** el límite crítico de 17 h se evalúa sobre la duración real al cerrar un par Entrada–Salida; los cortes de quincena tienen reglas específicas de inferencia. Las alertas no equivalen a una autorización de horas extras. Los límites de 14/17 horas son parámetros operativos del proyecto, no una interpretación legal del régimen laboral.
+
+Para la explicación completa, ver [Reglas de negocio para RRHH](docs/REGLAS_NEGOCIO_RRHH.md).
+
+## Estructura del proyecto
+
+```text
+automatizacion_fichadas/
+├── automatizar_fichadas.py         # Procesamiento principal y reglas
+├── requirements.txt                # Dependencias
+├── scripts/
+│   ├── instalar.bat                # Crea entorno e instala dependencias
+│   ├── procesar_ultimo.bat         # Procesa exportación más reciente
+│   └── monitorear_entrada.bat      # Observa archivos nuevos
+├── docs/
+│   ├── REGLAS_NEGOCIO_RRHH.md      # Manual funcional
+│   ├── GUIA_TECNICA.md             # Rutas, operación y limitaciones
+│   └── PRESENTACION_ACADEMICA.md   # Resumen profesional y académico
+├── tests/
+│   └── test_reglas.py              # Pruebas con datos ficticios
+└── data/
+    ├── entrada/                    # Archivo original descargado
+    ├── salidas_fichadas/           # Excel y CSV producidos
+    └── historico_originales/       # Copias auditables de originales
+```
+
+La carpeta `data/` contiene directorios vacíos versionados con `.gitkeep`; los archivos de personal y los reportes están **excluidos por `.gitignore`**.
+
+## Instalación en Windows
+
+1. Instalar Python 3.10 o superior y Git.
+2. Clonar el proyecto y entrar en su carpeta:
+
+   ```powershell
+   git clone https://github.com/FrancoCorrea90/automatizacion_fichadas.git
+   cd automatizacion_fichadas
+   ```
+3. Ejecutar `scripts\instalar.bat` con doble clic (o desde Terminal). Genera `.venv`, instala dependencias y prepara carpetas.
+4. Copiar **un archivo por quincena** a `data\entrada`.
+5. Ejecutar `scripts\procesar_ultimo.bat` para procesar el archivo de fecha de modificación más reciente.
+
+**Alternativa por terminal** (sin activar entorno virtual):
+
+```powershell
+.\.venv\Scripts\python.exe automatizar_fichadas.py --archivo ".\data\entrada\1_QUINCENA_072026.xls"
+```
+
+**Modo monitor:** `scripts\monitorear_entrada.bat`. Este modo vigila **archivos nuevos** mientras la ventana está abierta; no reevalúa automáticamente archivos ya existentes ni garantiza que una copia lenta haya terminado.
 
 ## Formato de entrada
 
-El archivo debe tener estas cuatro columnas **en este orden**:
-
-| Columna | Contenido |
-| --- | --- |
-| AC Nº | Legajo del empleado |
-| Nombre | Nombre del empleado |
-| Día/Hora | Fecha y hora de la marcación |
-| Estado | Entrada o Salida |
-
-Puede haber filas previas al encabezado. La fecha se interpreta con día primero. El programa toma las primeras cuatro columnas; un archivo con fecha y hora separadas necesita adaptación previa. Las fechas no interpretables y los estados distintos de Entrada/Salida se descartan durante la normalización.
-
-## Uso manual
-
-```powershell
-.\.venv\Scripts\python.exe automatizar_fichadas.py --archivo "C:\Fichadas\entrada\quincena.xlsx"
-```
-
-`--archivo` recibe un archivo, no una carpeta.
-
-## Monitoreo de carpeta
-
-```powershell
-.\.venv\Scripts\python.exe automatizar_fichadas.py --monitorear "C:\Fichadas\entrada"
-```
-
-Procesa nuevos archivos `.xls` y `.xlsx` al detectar su creación. Para detenerlo, presionar `Ctrl+C`. No procesa automáticamente los archivos ya existentes ni los eventos de modificación o renombrado. Espera tres segundos antes de leer: si una copia tarda más, puede fallar y requerir ejecución manual. El comportamiento en una carpeta de red debe validarse en el entorno de uso.
-
-## Configuración y reglas de cálculo
-
-Los parámetros se editan en `ConfigFichadas`, al inicio de `automatizar_fichadas.py`.
-
-| Parámetro | Valor predeterminado | Efecto |
-| --- | --- | --- |
-| `dia_corte_primera_quincena` | 15 | Cierre de la primera quincena |
-| `hora_corte_quincena` | 23:59:59 | Hora computable de cierre |
-| `aplicar_corte_quincenal` | True | Recorta turnos en el límite del período |
-| `computar_salida_inicial_sin_entrada` | True | Permite inferir el inicio de un turno |
-| `hora_maxima_salida_inicial` | 08:00:00 | Límite de la salida inicial inferida |
-| `minutos_duplicado` | 2 | Ventana de duplicados cercanos |
-| `minutos_correccion_estado` | 5 | Ventana de corrección de estado |
-| `horas_maximas_entrada_abierta` | 18 | Reemplazo de entradas antiguas ante una nueva entrada |
-| `jornada_minima_minutos` | 10 | Alerta por turno corto |
-| `jornada_larga_horas` | 15 | Alerta por turno largo |
-| `jornada_critica_horas` | 18 | Excluye turnos cerrados que superan este límite |
-| `porcentaje_sobre_promedio` | 0.30 | Alerta por superar un 30 % el promedio calculado |
-
-La primera salida del empleado puede computarse desde las 00:00 si ocurre el día 1 o 16 y hasta las 08:00. Una entrada sin salida al final del archivo puede computarse hasta el cierre si corresponde al día de corte. Son inferencias que requieren revisión del responsable de asistencia.
-
-Las alertas de jornadas cortas o largas no excluyen por sí solas las horas del total. El promedio se calcula con los turnos del archivo procesado, sin consultar un historial externo.
+Se identifican por nombre las columnas `AC Nº`, `Nombre`, `Día/Hora` y `Estado` (`Entrada` / `Salida`). Se toleran columnas adicionales, como `Unnamed`, y encabezados precedidos por filas de información. Fechas con formato día/mes/año. Un Excel con fecha y hora separadas requiere adaptación.
 
 ## Reportes
 
-Las carpetas se crean junto al script:
+Cada quincena produce una carpeta `data/salidas_fichadas/fichadas_AAAA-MM_Q1` o `Q2`, con un Excel consolidado y seis CSV. El Excel incluye:
 
-- `salidas_fichadas/fichadas_AAAA-MM_Q1/` o `Q2`: reportes.
-- `Archivos de origen/`: copias de los originales con marca de tiempo.
+| Hoja | Uso por RRHH |
+|---|---|
+| **Resumen** | Horas por persona, turnos, promedio, máximo y alertas |
+| **Turnos** | Entrada/salida reales y computables, horas y estado de control |
+| **Errores** | Fichadas y turnos excluidos; revisar antes de liquidar |
+| **Duplicados** | Marcas descartadas por repetición cercana |
+| **Correcciones** | Marcas excluidas por corrección inmediata |
+| **Normalizado** | Base de fichadas leída, previa al filtrado de duplicados |
 
-| Archivo | Contenido |
-| --- | --- |
-| `01_fichadas_normalizadas.csv` | Marcaciones normalizadas |
-| `02_turnos_calculados.csv` | Turnos, horas y controles |
-| `03_resumen_por_empleado.csv` | Totales e indicadores por empleado con turnos calculados |
-| `04_errores_fichada.csv` | Incidencias excluidas |
-| `05_duplicados_detectados.csv` | Marcaciones duplicadas excluidas |
-| `06_correcciones_estado.csv` | Correcciones inmediatas detectadas |
-| `fichadas_AAAA-MM_Qn_reporte.xlsx` | Hojas Resumen, Turnos, Errores, Duplicados, Correcciones y Normalizado |
+La columna `turnos_a_revisar` cuenta turnos computados cuyo `estado_control` es distinto de `OK`. No equivale a horas excluidas. Los turnos críticos no computados se registran en `Errores`.
 
-## Alcance y limitaciones
-
-- Usar un archivo por quincena. El nombre de salida se obtiene de la fecha mínima del archivo; no se separan automáticamente varios períodos. El nombre Q1/Q2 usa el día 15 aunque se cambie el parámetro de corte.
-- Si se reprocesa una quincena, se reemplazan sus reportes. Las copias de origen usan una marca de tiempo con precisión de segundos; dos ejecuciones en el mismo segundo pueden coincidir.
-- Un turno que cruza el cierre se recorta: el tramo posterior no se genera automáticamente como otro turno en ese procesamiento.
-- Los empleados sin turnos calculados no aparecen en el resumen; revisar también la hoja Errores.
-- El programa no calcula salarios, adicionales, licencias ni reglas de convenio. Los resultados necesitan revisión antes de su uso administrativo.
-
-## Estructura del repositorio
-
-- `automatizar_fichadas.py`: programa principal y parámetros.
-- `requirements.txt`: dependencias de ejecución.
-- `.gitignore`: exclusión de datos operativos y archivos locales.
-- `README.md`: documentación de instalación y uso.
-
-## Datos personales
-
-Los archivos de entrada y los reportes contienen información de asistencia. Mantenerlos fuera del repositorio y usar datos ficticios para ejemplos. El `.gitignore` previene nuevas incorporaciones, pero no elimina archivos ya registrados en el historial de Git.
-
-## Verificación básica
+## Validación y calidad
 
 ```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe -m py_compile automatizar_fichadas.py
-.\.venv\Scripts\python.exe automatizar_fichadas.py --help
 ```
 
-Estas comprobaciones verifican sintaxis y acceso a la ayuda. Para validar las reglas del negocio se requieren casos de prueba y contraste con resultados revisados manualmente.
+Las pruebas automatizadas cubren casos simulados. **Antes de usar el resultado en liquidaciones reales**, contrastar una quincena completa con el control manual de RRHH, especialmente salidas iniciales, cortes, turnos nocturnos y correcciones.
+
+## Alcance y límites
+
+- Un archivo debe contener un solo período quincenal; el sistema rechaza archivos con fichadas de distintas quincenas.
+- El corte a las 23:59:59 puede generar una diferencia de un segundo respecto de sistemas que usan las 00:00 como extremo exclusivo.
+- La parte posterior de un turno que cruza de período no se recrea automáticamente en este archivo: se requiere la exportación y validación de la siguiente quincena.
+- El resumen agrupa solo empleados con turnos calculados: revisar la hoja **Errores** para los demás.
+- No aplica por sí mismo convenios colectivos, feriados, nocturnidad, horas extras ni salarios.
+- Al reprocesar la misma quincena, los reportes se actualizan; se conserva otra copia del original en el histórico.
+
+## Privacidad
+
+No subir planillas reales de asistencia, nombres, legajos ni reportes con información personal a un repositorio público. `.gitignore` previene nuevas incorporaciones, pero **no borra archivos que ya hayan sido versionados**. Revisar el historial de Git antes de publicar.
+
+## Descripción académica breve
+
+Este proyecto implementa un flujo ETL (extracción, transformación y generación de resultados) aplicado al control de asistencia laboral. Utiliza Python y Pandas para depurar datos, validar secuencias temporales y aplicar reglas de negocio parametrizadas. El resultado es un sistema reproducible de apoyo a la gestión de RRHH, con reportes auditables y mecanismos de detección de anomalías que reducen el procesamiento manual sin eliminar la supervisión humana.
+
+Ver [Presentación académica](docs/PRESENTACION_ACADEMICA.md).
