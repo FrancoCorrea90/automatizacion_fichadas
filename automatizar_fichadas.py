@@ -1,6 +1,6 @@
 """
 Automatización de fichadas por quincena
-Autor: Py / Franco
+Autor: Franco Correa
 
 Objetivo:
 - Tomar el archivo descargado desde el reloj (Excel .xls o .xlsx)
@@ -13,10 +13,10 @@ Instalación sugerida:
     pip install pandas openpyxl xlrd watchdog
 
 Uso manual:
-    python automatizar_fichadas.py --archivo "C:/Fichadas/entrada/Copia de 1° QUINCENA 062026.xls"
+    python automatizar_fichadas.py --archivo "data/entrada/quincena.xls"
 
 Uso monitor automático:
-    python automatizar_fichadas.py --monitorear "C:/Fichadas/entrada"
+    python automatizar_fichadas.py --monitorear "data/entrada"
 """
 
 from __future__ import annotations
@@ -36,17 +36,13 @@ import pandas as pd
 # 1) CONFIGURACIÓN GENERAL
 # ============================================================
 
-# Carpeta donde esta ubicado este archivo Python
-BASE_DIR = Path(__file__).resolve().parent
-
-
 @dataclass
 class ConfigFichadas:
     # Carpeta donde quedan los reportes procesados
-    carpeta_salida: Path = BASE_DIR / "salidas_fichadas"
+    carpeta_salida: Path = Path(__file__).resolve().parent / "data" / "salidas_fichadas"
 
-    # Carpeta donde se guardan los originales para trazabilidad
-    carpeta_historico_originales: Path = BASE_DIR / "Archivos de origen"
+    # Carpeta donde se guardan los Excel originales, para trazabilidad
+    carpeta_historico_originales: Path = Path(__file__).resolve().parent / "data" / "historico_originales"
 
     # Día de corte de la primera quincena
     dia_corte_primera_quincena: int = 15
@@ -68,10 +64,10 @@ class ConfigFichadas:
     jornada_minima_minutos: float = 10.0
 
     # Jornada larga: no necesariamente error. Se marca para revisión.
-    jornada_larga_horas: float = 15.0
+    jornada_larga_horas: float = 14.0
 
     # Jornada demasiado larga: muy probablemente error de fichada.
-    jornada_critica_horas: float = 18.0
+    jornada_critica_horas: float = 17.0
 
     # Alerta si una jornada supera el promedio del operario en este porcentaje.
     porcentaje_sobre_promedio: float = 0.30
@@ -82,7 +78,7 @@ class ConfigFichadas:
 
     # Si una entrada queda abierta más horas que este límite y aparece otra Entrada,
     # se considera que la entrada anterior quedó incompleta y se reemplaza.
-    horas_maximas_entrada_abierta: float = 18.0
+    horas_maximas_entrada_abierta: float = 17.0
 
    
 
@@ -184,19 +180,27 @@ def leer_excel_fichadas(ruta_archivo: Path) -> pd.DataFrame:
     df = leer_excel_seguro(ruta_archivo, header=fila_header)
     df = df.dropna(how="all")
 
-    # Nos quedamos con las primeras 4 columnas reales
-    columnas = list(df.columns)
+    # Selección por nombre: tolera columnas adicionales y cambios de orden.
+    def _clave_columna(nombre):
+        import unicodedata
+        valor = unicodedata.normalize("NFKD", str(nombre))
+        return "".join(c for c in valor if not unicodedata.combining(c)).lower().strip()
 
-    print("Columnas detectadas:")
-    print(columnas)
-    print("Cantidad de columnas:", len(columnas))
-
-    if len(columnas) < 4:
-        raise ValueError(
-            "El archivo no tiene las 4 columnas esperadas: AC N°, Nombre, Día/Hora, Estado."
-        )
-
-    df = df.iloc[:, :4].copy()
+    mapeo = {}
+    for col in df.columns:
+        clave = _clave_columna(col)
+        if "ac" in clave and ("n" in clave or "º" in clave or "°" in clave):
+            mapeo.setdefault("legajo", col)
+        elif "nombre" in clave:
+            mapeo.setdefault("nombre", col)
+        elif "dia" in clave and "hora" in clave:
+            mapeo.setdefault("fecha_hora", col)
+        elif "estado" in clave:
+            mapeo.setdefault("estado", col)
+    faltantes = {"legajo", "nombre", "fecha_hora", "estado"} - set(mapeo)
+    if faltantes:
+        raise ValueError(f"Faltan columnas necesarias: {sorted(faltantes)}")
+    df = df[[mapeo[k] for k in ("legajo", "nombre", "fecha_hora", "estado")]].copy()
     df.columns = ["legajo", "nombre", "fecha_hora", "estado"]
 
     # Limpieza básica
@@ -330,7 +334,7 @@ def aplicar_corte_a_turno(
     return entrada, salida_real, False
 
 # ============================================================
-# 5) DETECCION DE DUPLICADOS CERCANOS
+# 5) DETECCION DE CORRECCIONES INMEDIATAS
 # ============================================================
 def detectar_correcciones_estado(
     df_valido: pd.DataFrame,
@@ -350,15 +354,8 @@ def detectar_correcciones_estado(
 
         Se excluye la Salida incorrecta y se conserva la Entrada.
 
-    Caso 2:
-        Entrada incorrecta -> Salida correcta
-        Ejemplo:
-            06:00 Entrada
-            16:55 Entrada  <- incorrecta
-            16:56 Salida   <- correcta
-
-        Si ya existía una entrada abierta anteriormente,
-        se excluye la Entrada incorrecta y se conserva la Salida.
+    Las secuencias Entrada -> Salida con una entrada ya abierta NO se
+    corrigen automáticamente: podrían ocultar una salida faltante.
     """
 
     df = df_valido.copy().sort_values(["legajo", "timestamp"]).reset_index(drop=True)
@@ -428,46 +425,11 @@ def detectar_correcciones_estado(
                 continue
 
             # ============================================================
-            # CASO 2:
-            # Hay una entrada abierta, el operario marca Entrada por error
-            # y enseguida corrige con Salida.
-            # Se excluye la Entrada incorrecta y se conserva la Salida.
-            # ============================================================
-            if (
-                entrada_abierta is not None
-                and estado_actual == "Entrada"
-                and estado_siguiente == "Salida"
-                and minutos_diferencia is not None
-                and 0 <= minutos_diferencia <= config.minutos_correccion_estado
-            ):
-                indices_a_excluir.add(idx_actual)
-
-                correcciones.append({
-                    "legajo": legajo,
-                    "nombre": nombre,
-                    "timestamp_excluido": ts_actual,
-                    "estado_excluido": estado_actual,
-                    "timestamp_conservado": ts_siguiente,
-                    "estado_conservado": estado_siguiente,
-                    "minutos_diferencia": round(minutos_diferencia, 2),
-                    "tipo_correccion": "Entrada incorrecta corregida por Salida",
-                    "contabilizada_en_total_horas": "No",
-                    "observacion_calculo": (
-                        "Corrección inmediata de estado: "
-                        "se excluye la Entrada incorrecta y se conserva la Salida siguiente"
-                    ),
-                })
-
-                # No reemplazamos la entrada_abierta.
-                # La Salida siguiente queda para cerrar la entrada original.
-                i += 1
-                continue
-
-            # ============================================================
             # Actualización del estado lógico para detectar casos futuros
             # ============================================================
             if estado_actual == "Entrada":
-                entrada_abierta = ts_actual
+                if entrada_abierta is None or (ts_actual - entrada_abierta).total_seconds() / 3600 > config.horas_maximas_entrada_abierta:
+                    entrada_abierta = ts_actual
 
             elif estado_actual == "Salida":
                 if entrada_abierta is not None:
@@ -571,7 +533,7 @@ def generar_turnos(
     Regla base:
     - Entrada abre turno.
     - Salida cierra turno.
-    - Entrada con otra entrada abierta => se analiza.
+    - Entrada con otra entrada abierta => se informa como error.
     - Salida sin entrada abierta => error, salvo salida inicial computable.
     - Entrada abierta al final => puede ser error o corte automático de quincena.
 
@@ -582,7 +544,6 @@ def generar_turnos(
       del mes siguiente, se computa hasta el último día del mes a las 23:59:59.
     - Si la primera fichada del día 1 o día 16 es una Salida de madrugada,
       se puede computar desde las 00:00:00 del inicio de quincena hasta esa salida.
-    - Si una entrada queda abierta más de la jornada crítica, no se arrastra durante días.
     """
 
     turnos = []
@@ -646,6 +607,7 @@ def generar_turnos(
         """
         entrada = pd.Timestamp(entrada)
         limite_quincena = obtener_fin_de_quincena(entrada, config)
+
         return entrada.date() == limite_quincena.date()
 
     for (legajo, nombre), grupo in df_valido.groupby(["legajo", "nombre"], sort=False):
@@ -664,37 +626,38 @@ def generar_turnos(
 
                 if entrada_abierta is not None:
                     limite_quincena = obtener_fin_de_quincena(entrada_abierta, config)
-                    horas_desde_entrada_abierta = (
-                        ts - entrada_abierta
-                    ).total_seconds() / 3600
+                    horas_desde_entrada_abierta = (ts - entrada_abierta).total_seconds() / 3600
 
-                    # Caso 1:
-                    # Entrada abierta justo en día de cierre de quincena.
-                    # Se computa hasta 23:59:59 y luego se abre la nueva entrada.
+                    # Caso especial 1:
+                    # Entrada abierta en día de cierre de quincena y aparece otra marca posterior.
+                    # Se computa la entrada abierta hasta 23:59:59.
                     if (
                         config.aplicar_corte_quincenal
                         and entrada_corresponde_a_cierre_quincena(entrada_abierta)
                         and ts > limite_quincena
                     ):
-                        registrar_turno(
-                            legajo=legajo,
-                            nombre=nombre,
-                            entrada_real=entrada_abierta,
-                            entrada_computable=entrada_abierta,
-                            salida_real=pd.NaT,
-                            salida_computable=limite_quincena,
-                            turno_recortado=True,
-                            observacion_calculo=(
-                                "Turno abierto en cierre de quincena: "
-                                "se computa hasta las 23:59:59 del día de corte"
+                        horas_hasta_corte = (limite_quincena - entrada_abierta).total_seconds() / 3600
+                        if horas_hasta_corte <= config.jornada_critica_horas:
+                            registrar_turno(
+                                legajo=legajo, nombre=nombre,
+                                entrada_real=entrada_abierta,
+                                entrada_computable=entrada_abierta,
+                                salida_real=pd.NaT,
+                                salida_computable=limite_quincena,
+                                turno_recortado=True,
+                                observacion_calculo="Cierre quincenal inferido: requiere validación RRHH"
                             )
-                        )
+                        else:
+                            registrar_error(legajo, nombre, entrada_abierta,
+                                "Entrada de cierre con duración crítica",
+                                "Hasta el corte supera 17 horas; no se computa")
 
+                        # La nueva entrada queda como entrada abierta válida.
                         entrada_abierta = ts
 
-                    # Caso 2:
+                    # Caso especial 2:
                     # Entrada abierta demasiado antigua.
-                    # Evita turnos absurdos de varios días.
+                    # Evita que se arme un turno absurdo de varios días.
                     elif horas_desde_entrada_abierta > config.horas_maximas_entrada_abierta:
                         registrar_error(
                             legajo=legajo,
@@ -704,16 +667,16 @@ def generar_turnos(
                             detalle=(
                                 f"Entrada abierta desde {entrada_abierta}. "
                                 f"Aparece nueva Entrada el {ts}. "
-                                f"Transcurrieron {horas_desde_entrada_abierta:.2f} horas. "
-                                "Se excluye la entrada anterior y se toma la nueva."
+                                f"Se excluye la entrada anterior y se toma la nueva."
                             ),
                         )
 
+                        # Se reemplaza la entrada anterior por la nueva.
                         entrada_abierta = ts
 
-                    # Caso 3:
-                    # Dos entradas dentro de un rango no crítico.
-                    # Se informa error, pero se conserva la primera entrada.
+                    # Caso normal:
+                    # Dos entradas cercanas o del mismo turno.
+                    # Se informa error y se conserva la primera entrada para que la salida cierre ese turno.
                     else:
                         registrar_error(
                             legajo=legajo,
@@ -723,6 +686,7 @@ def generar_turnos(
                             detalle=f"Entrada anterior abierta: {entrada_abierta}",
                         )
 
+                        # No reemplaza la entrada abierta anterior.
                         continue
 
                 else:
@@ -741,6 +705,7 @@ def generar_turnos(
                 # --------------------------------------------------------
                 if entrada_abierta is None:
 
+                    # Caso especial:
                     # Primera fichada del período es una salida de madrugada.
                     # Se computa desde 00:00:00 del inicio de quincena.
                     if salida_inicial_es_computable(
@@ -775,6 +740,9 @@ def generar_turnos(
                             detalle="No existe entrada abierta para cerrar turno",
                         )
 
+                    # Importante:
+                    # Si no hay entrada abierta, no se puede calcular diferencia horaria.
+                    # Por eso cortamos acá y seguimos con la próxima fichada.
                     continue
 
                 # --------------------------------------------------------
@@ -828,42 +796,32 @@ def generar_turnos(
 
                 entrada_abierta = None
 
-        # ============================================================
-        # ENTRADA ABIERTA AL FINAL DEL ARCHIVO
-        # ============================================================
+        # Si queda una entrada sin salida al final del archivo, solo se
+        # infiere un cierre cuando es día 15 o último día del mes.
         if entrada_abierta is not None:
-            limite_quincena = obtener_fin_de_quincena(entrada_abierta, config)
-
-            # Si la entrada abierta quedó justo en día de cierre,
-            # se computa hasta 23:59:59.
+            limite = obtener_fin_de_quincena(entrada_abierta, config)
             if (
                 config.aplicar_corte_quincenal
                 and entrada_corresponde_a_cierre_quincena(entrada_abierta)
+                and 0 <= (limite - entrada_abierta).total_seconds() / 3600 <= config.jornada_critica_horas
             ):
                 registrar_turno(
-                    legajo=legajo,
-                    nombre=nombre,
+                    legajo=legajo, nombre=nombre,
                     entrada_real=entrada_abierta,
                     entrada_computable=entrada_abierta,
-                    salida_real=pd.NaT,
-                    salida_computable=limite_quincena,
+                    salida_real=pd.NaT, salida_computable=limite,
                     turno_recortado=True,
-                    observacion_calculo=(
-                        "Turno abierto en cierre de quincena: "
-                        "se computa hasta las 23:59:59 del día de corte"
-                    )
+                    observacion_calculo="Entrada abierta al corte: cierre inferido, validar en RRHH"
                 )
-
             else:
                 registrar_error(
-                    legajo=legajo,
-                    nombre=nombre,
-                    timestamp=entrada_abierta,
-                    tipo_error="Entrada sin salida al cierre de quincena",
-                    detalle="Quedó una entrada abierta sin salida posterior",
+                    legajo, nombre, entrada_abierta,
+                    "Entrada sin salida al cierre del archivo",
+                    "No hay salida válida para cerrar el turno"
                 )
 
     return pd.DataFrame(turnos), pd.DataFrame(errores)
+
 
 # ============================================================
 # 8) ALERTAS SOBRE JORNADAS CORTAS, LARGAS Y PROMEDIO
@@ -1076,7 +1034,7 @@ def guardar_reportes(
         df_original_normalizado.to_excel(writer, sheet_name="Normalizado", index=False)
 
     # Archiva el original, sin pisar si ya existe.
-    marca_tiempo = datetime.now().strftime("%Y%m%d_%H%M%S")
+    marca_tiempo = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     destino_original = (
         config.carpeta_historico_originales
         / f"{nombre_quincena}_{marca_tiempo}_{archivo.name}"
@@ -1099,6 +1057,11 @@ def procesar_archivo(archivo: str | Path, config: ConfigFichadas = CONFIG) -> Pa
 
     # 1) Leer archivo original
     df = leer_excel_fichadas(archivo)
+
+    if not df.empty:
+        periodos = df["timestamp"].dt.strftime("%Y-%m").astype(str) + "_Q" + (df["timestamp"].dt.day > config.dia_corte_primera_quincena).astype(int).add(1).astype(str)
+        if periodos.nunique() > 1:
+            raise ValueError("El Excel contiene más de una quincena; separá los períodos antes de procesar.")
 
     # 2) Detectar y excluir duplicados cercanos
     df_valido, duplicados = detectar_duplicados_cercanos(df, config)
