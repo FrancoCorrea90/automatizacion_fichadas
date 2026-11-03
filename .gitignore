@@ -30,4 +30,5 @@ config_local.py
 Thumbs.db
 
 # Paquetes y copias temporales
-/automatizacion_fichadas_profesional//automatizar_fichadas_2_corregido.py
+/automatizacion_fichadas_profesional/
+/automatizar_fichadas_2_corregido.py
