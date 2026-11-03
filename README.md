@@ -123,8 +123,3 @@ Las pruebas automatizadas cubren casos simulados. **Antes de usar el resultado e
 
 No subir planillas reales de asistencia, nombres, legajos ni reportes con información personal a un repositorio público. `.gitignore` previene nuevas incorporaciones, pero **no borra archivos que ya hayan sido versionados**. Revisar el historial de Git antes de publicar.
 
-## Descripción académica breve
-
-Este proyecto implementa un flujo ETL (extracción, transformación y generación de resultados) aplicado al control de asistencia laboral. Utiliza Python y Pandas para depurar datos, validar secuencias temporales y aplicar reglas de negocio parametrizadas. El resultado es un sistema reproducible de apoyo a la gestión de RRHH, con reportes auditables y mecanismos de detección de anomalías que reducen el procesamiento manual sin eliminar la supervisión humana.
-
-Ver [Presentación académica](docs/PRESENTACION_ACADEMICA.md).
